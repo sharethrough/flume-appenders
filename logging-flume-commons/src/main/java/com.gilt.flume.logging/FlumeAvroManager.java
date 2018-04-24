@@ -23,6 +23,7 @@ public class FlumeAvroManager {
 
   private final static long MAXIMUM_REPORTING_MILLIS = 10 * 1000;
   private final static long MINIMUM_REPORTING_MILLIS = 100;
+  private final static long DEFAULT_REPORTER_CONNECTION_RESET_INTERVAL_MILLIS = 60 * 1000;
   private final static int DEFAULT_BATCH_SIZE = 50;
   private final static int DEFAULT_REPORTER_MAX_THREADPOOL_SIZE = 2;
   private final static int DEFAULT_REPORTER_MAX_QUEUE_SIZE = 50;
@@ -38,6 +39,7 @@ public class FlumeAvroManager {
       final Properties overrides,
       final Integer batchSize,
       final Long reportingWindow,
+      final Long connectionResetInterval,
       final Integer reporterMaxThreadPoolSize,
       final Integer reporterMaxQueueSize,
       final LoggingAdapterFactory loggerFactory) {
@@ -45,7 +47,7 @@ public class FlumeAvroManager {
       if (agents != null && agents.size() > 0) {
         Properties props = buildFlumeProperties(agents);
         props.putAll(overrides);
-        return new FlumeAvroManager(props, reportingWindow, batchSize, reporterMaxThreadPoolSize,
+        return new FlumeAvroManager(props, reportingWindow, connectionResetInterval, batchSize, reporterMaxThreadPoolSize,
               reporterMaxQueueSize, loggerFactory);
       } else {
         loggerFactory.create(FlumeAvroManager.class).error("No valid agents configured");
@@ -56,6 +58,7 @@ public class FlumeAvroManager {
 
   private FlumeAvroManager(final Properties props,
                            final Long reportingWindowReq,
+                           final Long connectionResetInterval,
                            final Integer batchSizeReq,
                            final Integer reporterMaxThreadPoolSizeReq,
                            final Integer reporterMaxQueueSizeReq,
@@ -67,8 +70,10 @@ public class FlumeAvroManager {
             DEFAULT_REPORTER_MAX_THREADPOOL_SIZE : reporterMaxThreadPoolSizeReq;
     final int reporterMaxQueueSize = reporterMaxQueueSizeReq == null ?
             DEFAULT_REPORTER_MAX_QUEUE_SIZE : reporterMaxQueueSizeReq;
+    final long reporterConnectionResetInterval = connectionResetInterval == null ?
+            DEFAULT_REPORTER_CONNECTION_RESET_INTERVAL_MILLIS : connectionResetInterval;
 
-    this.reporter = new EventReporter(props, reporterMaxThreadPoolSize, reporterMaxQueueSize, loggerFactory);
+    this.reporter = new EventReporter(props, reporterMaxThreadPoolSize, reporterMaxQueueSize, loggerFactory, reporterConnectionResetInterval);
     this.evQueue = new ArrayBlockingQueue<Event>(1000);
     final long reportingWindow = hamonizeReportingWindow(reportingWindowReq);
     final int batchSize = batchSizeReq == null ? DEFAULT_BATCH_SIZE : batchSizeReq;

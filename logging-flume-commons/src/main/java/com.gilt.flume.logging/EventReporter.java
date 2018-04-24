@@ -19,11 +19,16 @@ public class EventReporter {
 
   private final Properties connectionProps;
 
+  private final long connectionResetInterval;
+
+  private long connectionTimestamp;
+
   public EventReporter(final Properties properties, final int maximumThreadPoolSize, final int maxQueueSize,
-                       final LoggingAdapterFactory loggingFactory) {
+                       final LoggingAdapterFactory loggingFactory, final long connectionResetInterval) {
     this.logger = loggingFactory.create(EventReporter.class);
     BlockingQueue<Runnable> blockingQueue = new ArrayBlockingQueue<Runnable>(maxQueueSize);
     this.connectionProps = properties;
+    this.connectionResetInterval = connectionResetInterval;
 
     int corePoolSize = 1;
     TimeUnit threadKeepAliveUnits = TimeUnit.SECONDS;
@@ -39,10 +44,20 @@ public class EventReporter {
   }
 
   private synchronized RpcClient createClient() {
+    long now = System.currentTimeMillis();
+
+    // Force reset connection
+    if (connectionResetInterval > 0 &&
+        now - connectionTimestamp > connectionResetInterval) {
+      logger.info(String.format("Resetting connection since %d - %d > %d", now, connectionTimestamp, connectionResetInterval));
+      close();
+    }
+
     if (client == null) {
       logger.info("Creating a new Flume Client with properties: " + connectionProps);
       try {
         client = RpcClientFactory.getInstance(connectionProps);
+        connectionTimestamp = System.currentTimeMillis();
       } catch ( Exception e ) {
         logger.error(e.getLocalizedMessage(), e);
       }

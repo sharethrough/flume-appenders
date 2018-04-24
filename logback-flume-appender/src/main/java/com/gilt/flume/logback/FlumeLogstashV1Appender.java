@@ -30,6 +30,8 @@ public class FlumeLogstashV1Appender extends UnsynchronizedAppenderBase<ILogging
 
   private Long reportingWindow;
 
+  private Long connectionResetInterval;
+
   private Integer batchSize;
 
   private Integer reporterMaxThreadPoolSize;
@@ -90,6 +92,13 @@ public class FlumeLogstashV1Appender extends UnsynchronizedAppenderBase<ILogging
     }
   }
 
+  public void setConnectionResetInterval(String connectionResetIntervalStr) {
+    try {
+      this.connectionResetInterval = Long.parseLong(connectionResetIntervalStr);
+    } catch (NumberFormatException nfe) {
+      addWarn("Cannot set the connectionResetInterval to " + connectionResetIntervalStr, nfe);
+    }
+  }
 
   public void setReporterMaxThreadPoolSize(String reporterMaxThreadPoolSizeStr) {
     try {
@@ -131,7 +140,7 @@ public class FlumeLogstashV1Appender extends UnsynchronizedAppenderBase<ILogging
       Properties overrides = new Properties();
       overrides.putAll(extractProperties(flumeProperties));
       flumeManager = FlumeAvroManager.create(agents, overrides,
-              batchSize, reportingWindow, reporterMaxThreadPoolSize, reporterMaxQueueSize,
+              batchSize, reportingWindow, connectionResetInterval, reporterMaxThreadPoolSize, reporterMaxQueueSize,
               loggingFactory);
     } else {
       addError("Cannot configure a flume agent with an empty configuration");

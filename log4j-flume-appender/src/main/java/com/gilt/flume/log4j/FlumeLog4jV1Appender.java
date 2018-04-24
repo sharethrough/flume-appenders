@@ -27,6 +27,8 @@ public class FlumeLog4jV1Appender extends AppenderSkeleton {
 
   private Long reportingWindow;
 
+  private Long connectionResetInterval;
+
   private Integer batchSize;
 
   private Integer reporterMaxThreadPoolSize;
@@ -72,7 +74,7 @@ public class FlumeLog4jV1Appender extends AppenderSkeleton {
         Properties overrides = new Properties();
         overrides.putAll(extractProperties(flumeProperties));
         flumeManager = FlumeAvroManager.create(agents, overrides,
-            batchSize, reportingWindow, reporterMaxThreadPoolSize, reporterMaxQueueSize,
+            batchSize, reportingWindow, connectionResetInterval, reporterMaxThreadPoolSize, reporterMaxQueueSize,
             loggingFactory);
       } else {
         logger.warn("Cannot configure a flume agent with an empty configuration");
