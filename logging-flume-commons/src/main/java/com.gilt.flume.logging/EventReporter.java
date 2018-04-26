@@ -47,8 +47,7 @@ public class EventReporter {
     long now = System.currentTimeMillis();
 
     // Force reset connection
-    if (connectionResetInterval > 0 &&
-        now - connectionTimestamp > connectionResetInterval) {
+    if (shouldResetConnection(now)) {
       logger.info(String.format("Resetting connection since %d - %d > %d", now, connectionTimestamp, connectionResetInterval));
       close();
     }
@@ -77,6 +76,12 @@ public class EventReporter {
   public void shutdown() {
     close();
     es.shutdown();
+  }
+
+  private boolean shouldResetConnection(long now) {
+    return client != null &&
+            connectionResetInterval > 0 &&
+            now - connectionTimestamp > connectionResetInterval;
   }
 
   private class ReportingJob implements Runnable {
