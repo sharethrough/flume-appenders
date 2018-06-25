@@ -20,27 +20,17 @@ public class FlumeLog4jV1Appender extends AppenderSkeleton {
   protected static final Charset UTF_8 = Charset.forName("UTF-8");
 
   private FlumeAvroManager flumeManager;
-
   private String flumeAgents;
-
   private String flumeProperties;
-
   private Long reportingWindow;
-
   private Long connectionResetInterval;
-
   private Integer batchSize;
-
   private Integer reporterMaxThreadPoolSize;
-
   private Integer reporterMaxQueueSize;
-
+  private Integer reporterRetryCount;
   private Map<String, String> additionalAvroHeaders;
-
   private String application;
-
   private String hostname;
-
   private String type;
 
   private static final Logger logger = Logger.getLogger(FlumeLog4jV1Appender.class);
@@ -75,7 +65,7 @@ public class FlumeLog4jV1Appender extends AppenderSkeleton {
         overrides.putAll(extractProperties(flumeProperties));
         flumeManager = FlumeAvroManager.create(agents, overrides,
             batchSize, reportingWindow, connectionResetInterval, reporterMaxThreadPoolSize, reporterMaxQueueSize,
-            loggingFactory);
+            reporterRetryCount, loggingFactory);
       } else {
         logger.warn("Cannot configure a flume agent with an empty configuration");
       }
@@ -223,6 +213,10 @@ public class FlumeLog4jV1Appender extends AppenderSkeleton {
     } catch (NumberFormatException nfe) {
       logger.warn("Cannot set the reporterMaxQueueSize to " + reporterMaxQueueSizeStr, nfe);
     }
+  }
+
+  public void setReporterRetryCount(Integer reporterRetryCount) {
+    this.reporterRetryCount = reporterRetryCount;
   }
 
   private String resolveApplication() {

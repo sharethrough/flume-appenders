@@ -6,29 +6,28 @@ import org.apache.flume.api.RpcClient;
 import org.apache.flume.api.RpcClientFactory;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.*;
 
 public class EventReporter {
 
   private RpcClient client;
-
   private final LoggingAdapter logger;
-
   private final ExecutorService es;
-
   private final Properties connectionProps;
-
   private final long connectionResetInterval;
-
   private long connectionTimestamp;
+  private final int retryCount;
 
   public EventReporter(final Properties properties, final int maximumThreadPoolSize, final int maxQueueSize,
-                       final LoggingAdapterFactory loggingFactory, final long connectionResetInterval) {
+                       final LoggingAdapterFactory loggingFactory, final long connectionResetInterval,
+                       final int retryCount) {
     this.logger = loggingFactory.create(EventReporter.class);
     BlockingQueue<Runnable> blockingQueue = new ArrayBlockingQueue<Runnable>(maxQueueSize);
     this.connectionProps = properties;
     this.connectionResetInterval = connectionResetInterval;
+    this.retryCount = retryCount;
 
     int corePoolSize = 1;
     TimeUnit threadKeepAliveUnits = TimeUnit.SECONDS;
@@ -39,8 +38,8 @@ public class EventReporter {
             threadKeepAliveUnits, blockingQueue, handler);
   }
 
-  public void report(final Event[] events) {
-    es.submit(new ReportingJob(events));
+  public void report(final List<Event> events) {
+    es.submit(new ReportingJob(events, retryCount));
   }
 
   private synchronized RpcClient createClient() {
@@ -48,11 +47,13 @@ public class EventReporter {
 
     // Force reset connection
     if (shouldResetConnection(now)) {
-      logger.info(String.format("Resetting connection since %d - %d > %d", now, connectionTimestamp, connectionResetInterval));
+      logger.info(String.format("Resetting connection since %d - %d > %d", now, connectionTimestamp,
+              connectionResetInterval));
       close();
     }
 
-    if (client == null) {
+    if (!isClientUsable()) {
+      close();
       logger.info("Creating a new Flume Client with properties: " + connectionProps);
       try {
         client = RpcClientFactory.getInstance(connectionProps);
@@ -84,33 +85,43 @@ public class EventReporter {
             now - connectionTimestamp > connectionResetInterval;
   }
 
+  private boolean isClientUsable() {
+    return client != null && client.isActive();
+  }
+
+
   private class ReportingJob implements Runnable {
+    private final List<Event> events;
+    private final int retries;
 
-    private static final int retries = 3;
-
-    private final Event[] events;
-
-    public ReportingJob(final Event[] events) {
+    public ReportingJob(final List<Event> events, int retries) {
       this.events = events;
-      logger.debug("Created a job containing {} events", events.length);
+      this.retries = retries;
+      logger.debug("Created a job containing {} events", events.size());
     }
 
+    private boolean shouldRun(boolean success, int attemptCount) {
+      return !success && (retries < 0 || attemptCount < retries);
+    }
 
     @Override
     public void run() {
       boolean success = false;
-      int count = 0;
       try {
-        while (!success && count < retries) {
+        for (int count = 0; shouldRun(success, count); count += 1) {
           count++;
           try {
-            logger.debug("Reporting a batch of {} events, try {}", events.length, count);
-            createClient().appendBatch(Arrays.asList(events));
+            logger.debug("Reporting a batch of {} events, try {}", events.size(), count);
+            createClient().appendBatch(events);
             success = true;
-            logger.debug("Successfully reported a batch of {} events", events.length);
+            logger.debug("Successfully reported a batch of {} events", events.size());
           } catch (EventDeliveryException e) {
             logger.warn(e.getLocalizedMessage(), e);
-            logger.warn("Will retry " + (retries - count) + " times");
+            if (retries < 0) {
+              logger.warn("Will retry indefinitely.  Already tied " + count + " times");
+            } else if (count < retries) {
+              logger.warn("Will retry up to " + (retries - count) + " more times");
+            }
           }
         }
       } finally {

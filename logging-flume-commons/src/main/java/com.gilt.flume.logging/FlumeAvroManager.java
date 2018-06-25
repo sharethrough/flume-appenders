@@ -2,6 +2,7 @@ package com.gilt.flume.logging;
 
 import org.apache.flume.Event;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -20,10 +21,12 @@ public class FlumeAvroManager {
 
   private static final int MAX_RECONNECTS = 3;
   private static final int MINIMUM_TIMEOUT = 1000;
+  private static final int MAXIMUM_IN_MEMORY_QUEUE_SIZE = 1024;
 
   private final static long MAXIMUM_REPORTING_MILLIS = 10 * 1000;
   private final static long MINIMUM_REPORTING_MILLIS = 100;
   private final static long DEFAULT_REPORTER_CONNECTION_RESET_INTERVAL_MILLIS = 60 * 1000;
+  private final static int DEFAULT_RETRY_COUNT = -1; // retry indefinitely
   private final static int DEFAULT_BATCH_SIZE = 50;
   private final static int DEFAULT_REPORTER_MAX_THREADPOOL_SIZE = 2;
   private final static int DEFAULT_REPORTER_MAX_QUEUE_SIZE = 50;
@@ -42,28 +45,30 @@ public class FlumeAvroManager {
       final Long connectionResetInterval,
       final Integer reporterMaxThreadPoolSize,
       final Integer reporterMaxQueueSize,
+      final Integer retryCount,
       final LoggingAdapterFactory loggerFactory) {
 
       if (agents != null && agents.size() > 0) {
         Properties props = buildFlumeProperties(agents);
         props.putAll(overrides);
         return new FlumeAvroManager(props, reportingWindow, connectionResetInterval, batchSize, reporterMaxThreadPoolSize,
-              reporterMaxQueueSize, loggerFactory);
+              reporterMaxQueueSize, retryCount, loggerFactory);
       } else {
         loggerFactory.create(FlumeAvroManager.class).error("No valid agents configured");
+        return null;
       }
-
-    return null;
   }
 
-  private FlumeAvroManager(final Properties props,
-                           final Long reportingWindowReq,
-                           final Long connectionResetInterval,
-                           final Integer batchSizeReq,
-                           final Integer reporterMaxThreadPoolSizeReq,
-                           final Integer reporterMaxQueueSizeReq,
-                           final LoggingAdapterFactory loggerFactory) {
-
+  private FlumeAvroManager(
+          final Properties props,
+          final Long reportingWindowReq,
+          final Long connectionResetInterval,
+          final Integer batchSizeReq,
+          final Integer reporterMaxThreadPoolSizeReq,
+          final Integer reporterMaxQueueSizeReq,
+          final Integer retryCount,
+          final LoggingAdapterFactory loggerFactory
+  ) {
     this.logger = loggerFactory.create(FlumeAvroManager.class);
     this.loggerFactory = loggerFactory;
     final int reporterMaxThreadPoolSize = reporterMaxThreadPoolSizeReq == null ?
@@ -72,9 +77,11 @@ public class FlumeAvroManager {
             DEFAULT_REPORTER_MAX_QUEUE_SIZE : reporterMaxQueueSizeReq;
     final long reporterConnectionResetInterval = connectionResetInterval == null ?
             DEFAULT_REPORTER_CONNECTION_RESET_INTERVAL_MILLIS : connectionResetInterval;
+    final int reporterRetryCount = retryCount == null ? DEFAULT_RETRY_COUNT : retryCount;
 
-    this.reporter = new EventReporter(props, reporterMaxThreadPoolSize, reporterMaxQueueSize, loggerFactory, reporterConnectionResetInterval);
-    this.evQueue = new ArrayBlockingQueue<Event>(1000);
+    this.reporter = new EventReporter(props, reporterMaxThreadPoolSize, reporterMaxQueueSize, loggerFactory,
+            reporterConnectionResetInterval, reporterRetryCount);
+    this.evQueue = new ArrayBlockingQueue<Event>(MAXIMUM_IN_MEMORY_QUEUE_SIZE);
     final long reportingWindow = hamonizeReportingWindow(reportingWindowReq);
     final int batchSize = batchSizeReq == null ? DEFAULT_BATCH_SIZE : batchSizeReq;
     this.asyncThread = new AsyncThread(evQueue, batchSize, reportingWindow);
@@ -145,6 +152,7 @@ public class FlumeAvroManager {
     private final long reportingWindow;
     private final int  batchSize;
     private volatile boolean shutdown = false;
+    private volatile long errors = 0;
 
     private AsyncThread(final BlockingQueue<Event> queue, final int batchSize, final long reportingWindow) {
       this.queue = queue;
@@ -160,31 +168,27 @@ public class FlumeAvroManager {
       while (!shutdown) {
         long lastPoll = System.currentTimeMillis();
         long maxTime = lastPoll + reportingWindow;
-        final Event[] events = new Event[batchSize];
-        int count = 0;
+        final List<Event> events = new ArrayList<Event>(batchSize);
+        int remainingCapacity = batchSize;
         try {
-          while (count < batchSize && System.currentTimeMillis() < maxTime) {
-            lastPoll = Math.max(System.currentTimeMillis(), lastPoll); // Corrects to last seen time if clock
-                                                                       // moves backwards
+          while (remainingCapacity > 0 && System.currentTimeMillis() < maxTime) {
+            // Corrects to last seen time if clock moves backwards
+            lastPoll = Math.max(System.currentTimeMillis(), lastPoll);
             Event ev = queue.poll(maxTime - lastPoll, TimeUnit.MILLISECONDS);
             if (ev != null) {
-              events[count++] = ev;
+              events.add(ev);
+              remainingCapacity -= 1;
             }
           }
         } catch (InterruptedException ie) {
           logger.warn(ie.getLocalizedMessage(), ie);
         }
-        if(count > 0) {
-          Event[] batch;
-          if (count == events.length) {
-            batch = events;
-          } else {
-            batch = new Event[count];
-            System.arraycopy(events, 0, batch, 0, count);
-          }
+
+        if (!events.isEmpty()) {
           try{
-            reporter.report(batch);
+            reporter.report(events);
           } catch (RejectedExecutionException ex) {
+            errors += 1;
             logger.error("Logging events batch rejected by EventReporter. Check reporter connectivity or " +
                     "consider increasing reporterMaxThreadPoolSize or reporterMaxQueueSize", ex);
           }
@@ -192,6 +196,10 @@ public class FlumeAvroManager {
       }
 
       reporter.shutdown();
+    }
+
+    public long getErrorCount() {
+      return errors;
     }
 
     public void shutdown() {

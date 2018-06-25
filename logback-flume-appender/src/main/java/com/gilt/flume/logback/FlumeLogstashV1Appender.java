@@ -23,30 +23,20 @@ public class FlumeLogstashV1Appender extends UnsynchronizedAppenderBase<ILogging
   private static final LoggingAdapterFactory loggingFactory = new LogbackAdapterFactory();
 
   private FlumeAvroManager flumeManager;
-
   private String flumeAgents;
-
   private String flumeProperties;
-
   private Long reportingWindow;
-
   private Long connectionResetInterval;
-
   private Integer batchSize;
-
   private Integer reporterMaxThreadPoolSize;
-
   private Integer reporterMaxQueueSize;
-
+  private Integer reporterRetryCount;
   private Map<String, String> additionalAvroHeaders;
-
   private String application;
+  private String hostname;
+  private String type;
 
   protected Layout<ILoggingEvent> layout;
-
-  private String hostname;
-
-  private String type;
 
   public void setType(String type) {
     this.type = type;
@@ -116,6 +106,10 @@ public class FlumeLogstashV1Appender extends UnsynchronizedAppenderBase<ILogging
     }
   }
 
+  public void setReporterRetryCount(Integer reporterRetryCount) {
+    this.reporterRetryCount = reporterRetryCount;
+  }
+
   @Override
   public void start() {
     if (layout == null) {
@@ -141,12 +135,11 @@ public class FlumeLogstashV1Appender extends UnsynchronizedAppenderBase<ILogging
       overrides.putAll(extractProperties(flumeProperties));
       flumeManager = FlumeAvroManager.create(agents, overrides,
               batchSize, reportingWindow, connectionResetInterval, reporterMaxThreadPoolSize, reporterMaxQueueSize,
-              loggingFactory);
+              reporterRetryCount, loggingFactory);
     } else {
       addError("Cannot configure a flume agent with an empty configuration");
     }
     super.start();
-
   }
 
   private Map<String, String> extractProperties(String propertiesAsString) {
